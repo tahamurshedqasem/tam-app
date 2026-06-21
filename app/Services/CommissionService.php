@@ -86,7 +86,14 @@ class CommissionService
         }
 
         return DB::transaction(function () use ($institution, $marketer) {
-            // إنشاء العمولة
+            Log::info('🔄 بدء إنشاء عمولة مؤسسة', [
+                'institution_id' => $institution->id,
+                'institution_name' => $institution->name,
+                'marketer_id' => $marketer->id,
+                'marketer_name' => $marketer->full_name,
+            ]);
+
+            // 1️⃣ إنشاء العمولة
             $commission = Commission::create([
                 'user_id' => $marketer->id,
                 'role' => 'institution_marketer',
@@ -101,13 +108,25 @@ class CommissionService
                 'due_date' => now()->addDays(30),
             ]);
 
-            // تحديث إحصائيات المسوق
+            Log::info('✅ تم إنشاء العمولة', [
+                'commission_id' => $commission->id,
+                'amount' => $this->institutionMarketerCommission,
+            ]);
+
+            // 2️⃣ تحديث إحصائيات المسوق
             $marketer->increment('institutions_count');
             $marketer->increment('pending_commission', $this->institutionMarketerCommission);
             $marketer->increment('total_commission', $this->institutionMarketerCommission);
 
-            // ✅ للمؤسسات: نخصم قيمة العمولة من total
-            $this->createRevenueTransactionWithDeduction(
+            Log::info('✅ تم تحديث إحصائيات المسوق', [
+                'marketer_id' => $marketer->id,
+                'institutions_count' => $marketer->institutions_count,
+                'pending_commission' => $marketer->pending_commission,
+                'total_commission' => $marketer->total_commission,
+            ]);
+
+            // 3️⃣ إنشاء معاملة الإيرادات مع خصم من total
+            $revenueTransaction = $this->createRevenueTransactionWithDeduction(
                 'institution_registration',
                 $this->serviceFee,
                 $this->institutionMarketerCommission,
@@ -121,10 +140,17 @@ class CommissionService
                 ]
             );
 
-            Log::info('تم إنشاء عمولة تسجيل مؤسسة جديدة (مع خصم من total)', [
+            Log::info('✅ تم إنشاء معاملة الإيرادات مع الخصم', [
+                'transaction_id' => $revenueTransaction->id,
+                'old_total' => $revenueTransaction->total + $this->institutionMarketerCommission,
+                'new_total' => $revenueTransaction->total,
+                'deducted_amount' => $this->institutionMarketerCommission,
+            ]);
+
+            Log::info('✅ تم إنشاء عمولة تسجيل مؤسسة جديدة (مع خصم من total)', [
                 'institution_id' => $institution->id,
                 'marketer_id' => $marketer->id,
-                'amount' => $this->institutionMarketerCommission,
+                'commission_id' => $commission->id,
                 'commission_amount' => $this->institutionMarketerCommission,
             ]);
 
@@ -184,7 +210,13 @@ class CommissionService
         
         // ✅ الحصول على آخر total وخصم قيمة العمولة
         $previousTotal = $this->getCompanyTotal();
-        $newTotal = $previousTotal - $totalCommissions; // ✅ نخصم قيمة العمولة
+        $newTotal = max(0, $previousTotal - $totalCommissions); // ✅ نخصم قيمة العمولة ولا نسمح بالوصول للسال
+
+        Log::info('📊 حساب الخصم', [
+            'previous_total' => $previousTotal,
+            'deduction_amount' => $totalCommissions,
+            'new_total' => $newTotal,
+        ]);
 
         return RevenueTransaction::create([
             'type' => $type,
@@ -208,7 +240,9 @@ class CommissionService
      */
     protected function getCompanyTotal(): float
     {
-        return (float) RevenueTransaction::orderBy('id', 'desc')->value('total') ?? 0;
+        $total = (float) RevenueTransaction::orderBy('id', 'desc')->value('total') ?? 0;
+        Log::info('📊 الحصول على total الحالي', ['total' => $total]);
+        return $total;
     }
 
     /**
