@@ -6,6 +6,8 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Institution\CreateInstitutionRequest;
 use App\Http\Requests\Institution\UpdateInstitutionRequest;
 use App\Http\Resources\InstitutionResource;
+use App\Models\Commission;
+use App\Models\RevenueTransaction;
 use App\Services\InstitutionService;
 use App\Models\Institution;
 use App\Models\User;

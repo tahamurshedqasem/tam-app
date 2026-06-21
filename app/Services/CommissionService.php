@@ -48,8 +48,8 @@ class CommissionService
             $marketer->increment('pending_commission', $this->customerMarketerCommission);
             $marketer->increment('total_commission', $this->customerMarketerCommission);
 
-            // إنشاء معاملة الإيرادات
-            $this->createRevenueTransaction(
+            // ✅ إنشاء معاملة الإيرادات مع إضافة إلى total (للعملاء)
+            $this->createRevenueTransactionWithTotal(
                 'customer_registration',
                 $this->serviceFee,
                 $this->customerMarketerCommission,
@@ -105,8 +105,8 @@ class CommissionService
             $marketer->increment('pending_commission', $this->institutionMarketerCommission);
             $marketer->increment('total_commission', $this->institutionMarketerCommission);
 
-            // إنشاء معاملة الإيرادات
-            $this->createRevenueTransaction(
+            // ✅ إنشاء معاملة الإيرادات بدون إضافة إلى total (للمؤسسات)
+            $this->createRevenueTransactionWithoutTotal(
                 'institution_registration',
                 $this->serviceFee,
                 $this->institutionMarketerCommission,
@@ -131,9 +131,44 @@ class CommissionService
     }
 
     /**
-     * إنشاء معاملة إيرادات
+     * إنشاء معاملة إيرادات مع إضافة إلى total (للعملاء فقط)
      */
-    protected function createRevenueTransaction(
+    protected function createRevenueTransactionWithTotal(
+        string $type,
+        float $grossAmount,
+        float $totalCommissions,
+        ?int $customerId = null,
+        ?int $institutionId = null,
+        ?int $marketerId = null,
+        array $breakdown = []
+    ): RevenueTransaction {
+        $netAmount = $grossAmount - $totalCommissions;
+        
+        // ✅ حساب المجموع التراكمي للشركة
+        $previousTotal = $this->getCompanyTotal();
+        $newTotal = $previousTotal + $netAmount;
+
+        return RevenueTransaction::create([
+            'type' => $type,
+            'gross_amount' => $grossAmount,
+            'total_commissions' => $totalCommissions,
+            'net_amount' => $netAmount,
+            'total' => $newTotal,
+            'commission_breakdown' => $breakdown,
+            'customer_id' => $customerId,
+            'institution_id' => $institutionId,
+            'marketer_id' => $marketerId,
+            'status' => 'completed',
+            'currency' => $this->defaultCurrency,
+            'transaction_date' => now(),
+            'notes' => "معاملة {$type} بقيمة {$grossAmount} {$this->defaultCurrency}",
+        ]);
+    }
+
+    /**
+     * إنشاء معاملة إيرادات بدون إضافة إلى total (للمؤسسات فقط)
+     */
+    protected function createRevenueTransactionWithoutTotal(
         string $type,
         float $grossAmount,
         float $totalCommissions,
@@ -149,6 +184,7 @@ class CommissionService
             'gross_amount' => $grossAmount,
             'total_commissions' => $totalCommissions,
             'net_amount' => $netAmount,
+            'total' => 0, // ✅ لا نضيف أي مبلغ إلى total
             'commission_breakdown' => $breakdown,
             'customer_id' => $customerId,
             'institution_id' => $institutionId,
@@ -156,8 +192,16 @@ class CommissionService
             'status' => 'completed',
             'currency' => $this->defaultCurrency,
             'transaction_date' => now(),
-            'notes' => "معاملة {$type} بقيمة {$grossAmount} {$this->defaultCurrency}",
+            'notes' => "معاملة {$type} بقيمة {$grossAmount} {$this->defaultCurrency} (بدون إضافة إلى total)",
         ]);
+    }
+
+    /**
+     * الحصول على المجموع التراكمي للشركة
+     */
+    protected function getCompanyTotal(): float
+    {
+        return (float) RevenueTransaction::orderBy('id', 'desc')->value('total') ?? 0;
     }
 
     /**
