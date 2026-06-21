@@ -860,7 +860,7 @@ class InstitutionMarketerController extends Controller
                 'type' => 'institution_registration',
                 'gross_amount' => $serviceFee,
                 'total_commissions' => $commissionAmount,
-                'net_amount' => $serviceFee - $commissionAmount,
+                'net_amount' => 0.00,
                 'total' => $newTotal, // ✅ الخصم هنا
                 'commission_breakdown' => [
                     'commission_id' => $commission->id,
