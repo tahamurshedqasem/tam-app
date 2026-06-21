@@ -7,6 +7,7 @@ use App\Models\User;
 use App\Models\Institution;
 use App\Models\Commission;
 use App\Models\InstitutionType;
+use App\Models\RevenueTransaction;
 use App\Services\NotificationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -801,8 +802,16 @@ class InstitutionMarketerController extends Controller
     protected function createMarketerCommission(Institution $institution, User $marketer): void
     {
         try {
-            $commissionAmount = 400;
+            $commissionAmount = 400; // 400 YER
+            $serviceFee = 3000; // 3000 YER
 
+            Log::info('🔄 Creating commission for institution marketer', [
+                'institution_id' => $institution->id,
+                'marketer_id' => $marketer->id,
+                'commission_amount' => $commissionAmount,
+            ]);
+
+            // 1️⃣ إنشاء العمولة
             $commission = Commission::create([
                 'user_id' => $marketer->id,
                 'role' => 'institution_marketer',
@@ -813,26 +822,79 @@ class InstitutionMarketerController extends Controller
                 'transaction_id' => null,
                 'status' => 'pending',
                 'currency' => 'YER',
-                'service_fee' => 0,
+                'service_fee' => $serviceFee, // ✅ 3000 بدلاً من 0
                 'customer_discount' => 0,
                 'due_date' => now()->addDays(30),
                 'notes' => "عمولة تسجيل مؤسسة جديدة - {$institution->name}"
             ]);
 
-            // تحديث إحصائيات المسوق
+            Log::info('✅ Commission created', [
+                'commission_id' => $commission->id,
+            ]);
+
+            // 2️⃣ تحديث إحصائيات المسوق
             $marketer->increment('institutions_count');
             $marketer->increment('pending_commission', $commissionAmount);
             $marketer->increment('total_commission', $commissionAmount);
 
-            Log::info('Commission created for institution marketer', [
-                'commission_id' => $commission->id,
+            Log::info('✅ Marketer stats updated', [
                 'marketer_id' => $marketer->id,
+                'institutions_count' => $marketer->institutions_count,
+                'pending_commission' => $marketer->pending_commission,
+                'total_commission' => $marketer->total_commission,
+            ]);
+
+            // 3️⃣ ✅ الحصول على آخر total من revenue_transactions
+            $lastRecord = RevenueTransaction::orderBy('id', 'desc')->first();
+            $previousTotal = $lastRecord ? (float) $lastRecord->total : 0;
+            $newTotal = max(0, $previousTotal - $commissionAmount);
+
+            Log::info('📊 Total calculation', [
+                'previous_total' => $previousTotal,
+                'deduction_amount' => $commissionAmount,
+                'new_total' => $newTotal,
+            ]);
+
+            // 4️⃣ ✅ إنشاء معاملة الإيرادات مع الخصم
+            $revenueTransaction = RevenueTransaction::create([
+                'type' => 'institution_registration',
+                'gross_amount' => $serviceFee,
+                'total_commissions' => $commissionAmount,
+                'net_amount' => $serviceFee - $commissionAmount,
+                'total' => $newTotal, // ✅ الخصم هنا
+                'commission_breakdown' => [
+                    'commission_id' => $commission->id,
+                    'institution_name' => $institution->name,
+                    'institution_id' => $institution->id,
+                    'marketer_name' => $marketer->full_name,
+                    'marketer_id' => $marketer->id,
+                    'commission_amount' => $commissionAmount,
+                    'service_fee' => $serviceFee,
+                    'previous_total' => $previousTotal,
+                    'new_total' => $newTotal,
+                ],
                 'institution_id' => $institution->id,
-                'amount' => $commissionAmount
+                'marketer_id' => $marketer->id,
+                'status' => 'completed',
+                'currency' => 'YER',
+                'transaction_date' => now(),
+                'notes' => "تسجيل مؤسسة جديدة: {$institution->name} - خصم {$commissionAmount} YER من total",
+            ]);
+
+            Log::info('✅ Revenue transaction created with deduction', [
+                'transaction_id' => $revenueTransaction->id,
+                'previous_total' => $previousTotal,
+                'new_total' => $newTotal,
+                'deducted_amount' => $commissionAmount,
             ]);
 
         } catch (\Exception $e) {
-            Log::error('Failed to create commission: ' . $e->getMessage());
+            Log::error('❌ Failed to create commission and revenue: ' . $e->getMessage(), [
+                'institution_id' => $institution->id,
+                'marketer_id' => $marketer->id,
+                'trace' => $e->getTraceAsString()
+            ]);
+            // لا نريد أن يفشل إنشاء المؤسسة بسبب فشل إنشاء العمولة
         }
     }
 
