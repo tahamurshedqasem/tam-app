@@ -76,7 +76,7 @@ class InstitutionService
     }
 
     /**
-     * إنشاء عمولة للمسوق (400 ريال يمني) ومعاملة الإيرادات
+     * ✅ إنشاء عمولة للمسوق (400 ريال يمني) ومعاملة الإيرادات مع خصم من total
      */
     protected function createMarketerCommissionWithRevenue(Institution $institution, User $marketer): void
     {
@@ -85,7 +85,14 @@ class InstitutionService
             $serviceFee = $this->serviceFee; // 3000 YER
             $netAmount = $serviceFee - $commissionAmount; // 2600 YER
 
-            // 1. إنشاء العمولة
+            Log::info('🔄 Creating institution marketer commission with deduction', [
+                'institution_id' => $institution->id,
+                'marketer_id' => $marketer->id,
+                'commission_amount' => $commissionAmount,
+                'service_fee' => $serviceFee,
+            ]);
+
+            // 1️⃣ إنشاء العمولة
             $commission = Commission::create([
                 'user_id' => $marketer->id,
                 'role' => 'institution_marketer',
@@ -102,24 +109,40 @@ class InstitutionService
                 'notes' => "عمولة تسجيل مؤسسة جديدة - {$institution->name}"
             ]);
 
-            // 2. تحديث إحصائيات المسوق
+            Log::info('✅ Commission created', [
+                'commission_id' => $commission->id,
+                'amount' => $commissionAmount,
+            ]);
+
+            // 2️⃣ تحديث إحصائيات المسوق
             $marketer->increment('institutions_count');
             $marketer->increment('pending_commission', $commissionAmount);
             $marketer->increment('total_commission', $commissionAmount);
 
-            Log::info('Institution marketer commission created', [
-                'commission_id' => $commission->id,
+            Log::info('✅ Marketer stats updated', [
                 'marketer_id' => $marketer->id,
-                'institution_id' => $institution->id,
-                'amount' => $commissionAmount,
+                'institutions_count' => $marketer->institutions_count,
+                'pending_commission' => $marketer->pending_commission,
+                'total_commission' => $marketer->total_commission,
             ]);
 
-            // 3. إنشاء معاملة الإيرادات
+            // 3️⃣ ✅ الحصول على آخر total وخصم قيمة العمولة
+            $previousTotal = $this->getCompanyTotal();
+            $newTotal = max(0, $previousTotal - $commissionAmount); // ✅ نخصم 400 ريال
+
+            Log::info('📊 Total calculation for deduction', [
+                'previous_total' => $previousTotal,
+                'deduction_amount' => $commissionAmount,
+                'new_total' => $newTotal,
+            ]);
+
+            // 4️⃣ ✅ إنشاء معاملة الإيرادات مع الخصم
             $revenueTransaction = RevenueTransaction::create([
                 'type' => 'institution_registration',
                 'gross_amount' => $serviceFee,
                 'total_commissions' => $commissionAmount,
                 'net_amount' => $netAmount,
+                'total' => $newTotal, // ✅ total الجديد بعد الخصم
                 'commission_breakdown' => [
                     'commission_id' => $commission->id,
                     'institution_name' => $institution->name,
@@ -129,34 +152,48 @@ class InstitutionService
                     'commission_amount' => $commissionAmount,
                     'service_fee' => $serviceFee,
                     'net_revenue' => $netAmount,
+                    'previous_total' => $previousTotal,
+                    'new_total' => $newTotal,
                 ],
                 'institution_id' => $institution->id,
                 'marketer_id' => $marketer->id,
                 'status' => 'completed',
                 'currency' => $this->currency,
                 'transaction_date' => now(),
-                'notes' => "تسجيل مؤسسة جديدة: {$institution->name} - الإيرادات: {$serviceFee} {$this->currency} - العمولة: {$commissionAmount} {$this->currency} - صافي الإيرادات: {$netAmount} {$this->currency}"
+                'notes' => "تسجيل مؤسسة جديدة: {$institution->name} - خصم {$commissionAmount} {$this->currency} من total"
             ]);
 
-            Log::info('Revenue transaction created for institution', [
+            Log::info('✅ Revenue transaction created with deduction', [
                 'transaction_id' => $revenueTransaction->id,
                 'institution_id' => $institution->id,
                 'gross_amount' => $serviceFee,
                 'commission' => $commissionAmount,
                 'net_amount' => $netAmount,
+                'previous_total' => $previousTotal,
+                'new_total' => $newTotal,
             ]);
 
-            // 4. (اختياري) إنشاء خصم من حساب المؤسسة
+            // 5️⃣ (اختياري) إنشاء خصم من حساب المؤسسة
             $this->createInstitutionDeduction($institution);
 
         } catch (\Exception $e) {
-            Log::error('Failed to create institution marketer commission and revenue: ' . $e->getMessage(), [
+            Log::error('❌ Failed to create institution marketer commission and revenue: ' . $e->getMessage(), [
                 'institution_id' => $institution->id,
                 'marketer_id' => $marketer->id,
                 'trace' => $e->getTraceAsString()
             ]);
             // لا نريد أن يفشل إنشاء المؤسسة بسبب فشل إنشاء العمولة
         }
+    }
+
+    /**
+     * ✅ الحصول على المجموع التراكمي للشركة من جدول revenue_transactions
+     */
+    protected function getCompanyTotal(): float
+    {
+        $total = (float) RevenueTransaction::orderBy('id', 'desc')->value('total') ?? 0;
+        Log::info('📊 Current company total', ['total' => $total]);
+        return $total;
     }
 
     /**
@@ -183,7 +220,7 @@ class InstitutionService
                 'updated_at' => now(),
             ]);
 
-            Log::info('Institution deduction created', [
+            Log::info('✅ Institution deduction created', [
                 'institution_id' => $institution->id,
                 'amount' => $this->serviceFee,
             ]);
@@ -267,7 +304,7 @@ class InstitutionService
     }
 
     /**
-     * إنشاء عمولة تجديد للمؤسسة
+     * إنشاء عمولة تجديد للمؤسسة (مع خصم من total)
      */
     protected function createRenewalCommission(Institution $institution, User $marketer): void
     {
@@ -297,12 +334,17 @@ class InstitutionService
             $marketer->increment('pending_commission', $commissionAmount);
             $marketer->increment('total_commission', $commissionAmount);
 
-            // إنشاء معاملة الإيرادات
+            // ✅ الحصول على آخر total وخصم قيمة العمولة
+            $previousTotal = $this->getCompanyTotal();
+            $newTotal = max(0, $previousTotal - $commissionAmount);
+
+            // ✅ إنشاء معاملة الإيرادات مع الخصم
             RevenueTransaction::create([
                 'type' => 'renewal',
                 'gross_amount' => $serviceFee,
                 'total_commissions' => $commissionAmount,
                 'net_amount' => $netAmount,
+                'total' => $newTotal,
                 'commission_breakdown' => [
                     'commission_id' => $commission->id,
                     'institution_name' => $institution->name,
@@ -311,20 +353,24 @@ class InstitutionService
                     'commission_amount' => $commissionAmount,
                     'service_fee' => $serviceFee,
                     'net_revenue' => $netAmount,
+                    'previous_total' => $previousTotal,
+                    'new_total' => $newTotal,
                 ],
                 'institution_id' => $institution->id,
                 'marketer_id' => $marketer->id,
                 'status' => 'completed',
                 'currency' => $this->currency,
                 'transaction_date' => now(),
-                'notes' => "تجديد اتفاقية مؤسسة: {$institution->name} - الإيرادات: {$serviceFee} {$this->currency} - العمولة: {$commissionAmount} {$this->currency} - صافي الإيرادات: {$netAmount} {$this->currency}"
+                'notes' => "تجديد اتفاقية مؤسسة: {$institution->name} - خصم {$commissionAmount} {$this->currency} من total"
             ]);
 
-            Log::info('Renewal commission created for institution', [
+            Log::info('✅ Renewal commission created with deduction', [
                 'commission_id' => $commission->id,
                 'institution_id' => $institution->id,
                 'marketer_id' => $marketer->id,
                 'amount' => $commissionAmount,
+                'previous_total' => $previousTotal,
+                'new_total' => $newTotal,
             ]);
 
         } catch (\Exception $e) {
