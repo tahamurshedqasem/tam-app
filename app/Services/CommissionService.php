@@ -48,7 +48,7 @@ class CommissionService
             $marketer->increment('pending_commission', $this->customerMarketerCommission);
             $marketer->increment('total_commission', $this->customerMarketerCommission);
 
-            // ✅ إنشاء معاملة الإيرادات مع إضافة إلى total (للعملاء)
+            // ✅ للعملاء: نضيف إلى total
             $this->createRevenueTransactionWithTotal(
                 'customer_registration',
                 $this->serviceFee,
@@ -76,6 +76,7 @@ class CommissionService
 
     /**
      * إنشاء عمولة لمسوق المؤسسات عند تسجيل مؤسسة جديدة
+     * ✅ يتم خصم قيمة العمولة من total
      */
     public function createInstitutionRegistrationCommission(Institution $institution, User $marketer): ?Commission
     {
@@ -105,8 +106,8 @@ class CommissionService
             $marketer->increment('pending_commission', $this->institutionMarketerCommission);
             $marketer->increment('total_commission', $this->institutionMarketerCommission);
 
-            // ✅ إنشاء معاملة الإيرادات بدون إضافة إلى total (للمؤسسات)
-            $this->createRevenueTransactionWithoutTotal(
+            // ✅ للمؤسسات: نخصم قيمة العمولة من total
+            $this->createRevenueTransactionWithDeduction(
                 'institution_registration',
                 $this->serviceFee,
                 $this->institutionMarketerCommission,
@@ -120,10 +121,11 @@ class CommissionService
                 ]
             );
 
-            Log::info('تم إنشاء عمولة تسجيل مؤسسة جديدة', [
+            Log::info('تم إنشاء عمولة تسجيل مؤسسة جديدة (مع خصم من total)', [
                 'institution_id' => $institution->id,
                 'marketer_id' => $marketer->id,
                 'amount' => $this->institutionMarketerCommission,
+                'commission_amount' => $this->institutionMarketerCommission,
             ]);
 
             return $commission;
@@ -161,14 +163,15 @@ class CommissionService
             'status' => 'completed',
             'currency' => $this->defaultCurrency,
             'transaction_date' => now(),
-            'notes' => "معاملة {$type} بقيمة {$grossAmount} {$this->defaultCurrency}",
+            'notes' => "معاملة {$type} بقيمة {$grossAmount} {$this->defaultCurrency} (تمت الإضافة إلى total)",
         ]);
     }
 
     /**
-     * إنشاء معاملة إيرادات بدون إضافة إلى total (للمؤسسات فقط)
+     * إنشاء معاملة إيرادات مع خصم من total (للمؤسسات فقط)
+     * ✅ يتم خصم قيمة العمولة من آخر total
      */
-    protected function createRevenueTransactionWithoutTotal(
+    protected function createRevenueTransactionWithDeduction(
         string $type,
         float $grossAmount,
         float $totalCommissions,
@@ -178,13 +181,17 @@ class CommissionService
         array $breakdown = []
     ): RevenueTransaction {
         $netAmount = $grossAmount - $totalCommissions;
+        
+        // ✅ الحصول على آخر total وخصم قيمة العمولة
+        $previousTotal = $this->getCompanyTotal();
+        $newTotal = $previousTotal - $totalCommissions; // ✅ نخصم قيمة العمولة
 
         return RevenueTransaction::create([
             'type' => $type,
             'gross_amount' => $grossAmount,
             'total_commissions' => $totalCommissions,
             'net_amount' => $netAmount,
-            'total' => 0, // ✅ لا نضيف أي مبلغ إلى total
+            'total' => $newTotal, // ✅ total الجديد بعد الخصم
             'commission_breakdown' => $breakdown,
             'customer_id' => $customerId,
             'institution_id' => $institutionId,
@@ -192,7 +199,7 @@ class CommissionService
             'status' => 'completed',
             'currency' => $this->defaultCurrency,
             'transaction_date' => now(),
-            'notes' => "معاملة {$type} بقيمة {$grossAmount} {$this->defaultCurrency} (بدون إضافة إلى total)",
+            'notes' => "معاملة {$type} بقيمة {$grossAmount} {$this->defaultCurrency} (تم خصم {$totalCommissions} {$this->defaultCurrency} من total)",
         ]);
     }
 
