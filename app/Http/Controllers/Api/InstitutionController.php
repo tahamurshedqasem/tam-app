@@ -315,23 +315,101 @@ class InstitutionController extends Controller
      * GET /api/institutions/{institution}
      * عرض بيانات مؤسسة
      */
-    public function show(Institution $institution): JsonResponse
-    {
-        try {
-            $institution->load(['type', 'owner', 'createdBy', 'owners']);
-            
-            return response()->json([
-                'success' => true,
-                'data' => new InstitutionResource($institution)
-            ]);
-        } catch (\Exception $e) {
-            Log::error('Institution show error: ' . $e->getMessage());
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage()
-            ], 500);
+    // في InstitutionController.php (Backend)
+// في InstitutionController - دالة show
+public function show($id): JsonResponse
+{
+    try {
+        // ✅ جلب المؤسسة مع العلاقات
+        $institution = Institution::with(['type'])->findOrFail($id);
+        
+        // ✅ جلب المالك
+        $owner = null;
+        if ($institution->owner_id) {
+            $owner = User::find($institution->owner_id);
         }
+        
+        // ✅ جلب المسوق - محاولة من عدة مصادر
+        $marketer = null;
+        
+        // 1. محاولة من created_by_marketer
+        if ($institution->created_by_marketer) {
+            $marketer = User::find($institution->created_by_marketer);
+        }
+        
+        // 2. إذا لم يوجد، حاول من created_by (حقل قديم)
+        if (!$marketer && property_exists($institution, 'created_by') && $institution->created_by) {
+            $marketer = User::find($institution->created_by);
+        }
+        
+        // 3. إذا لم يوجد، حاول من جدول institution_owners (قد يكون المالك هو المسوق)
+        if (!$marketer && $institution->owner_id) {
+            $ownerUser = User::find($institution->owner_id);
+            // إذا كان المالك لديه دور institution_marketer
+            if ($ownerUser && $ownerUser->role === 'institution_marketer') {
+                $marketer = $ownerUser;
+            }
+        }
+        
+        // 4. إذا لم يوجد، جلب أول مسوق مؤسسات من النظام
+        if (!$marketer) {
+            $marketer = User::where('role', 'institution_marketer')
+                ->where('status', 'active')
+                ->first();
+        }
+        
+        // ✅ بناء البيانات
+        $data = [
+            'id' => $institution->id,
+            'name' => $institution->name,
+            'type_id' => $institution->type_id,
+            'type_name' => $institution->type ? ($institution->type->name_ar ?? $institution->type->name) : 'غير محدد',
+            'phone' => $institution->phone,
+            'email' => $institution->email,
+            'address' => $institution->address,
+            'discount_percentage' => (float) $institution->discount_percentage,
+            'status' => $institution->status,
+            'created_at' => $institution->created_at,
+            'agreement_date' => $institution->agreement_date,
+            'agreement_expiry_date' => $institution->agreement_expiry_date,
+            'contract_file' => $institution->contract_file,
+            'description' => $institution->description,
+            
+            // ✅ المالك
+            'owner' => $owner ? [
+                'id' => $owner->id,
+                'full_name' => $owner->full_name,
+                'phone' => $owner->phone,
+            ] : null,
+            'owner_id' => $institution->owner_id,
+            'owner_name' => $owner ? $owner->full_name : null,
+            
+            // ✅ المسوق
+            'created_by' => $marketer ? [
+                'id' => $marketer->id,
+                'full_name' => $marketer->full_name,
+                'phone' => $marketer->phone,
+            ] : null,
+            'marketer_id' => $marketer ? $marketer->id : null,
+            'marketer_name' => $marketer ? $marketer->full_name : null,
+        ];
+        
+        // ✅ طباعة البيانات للتحقق
+        Log::info('📤 Final Institution Data:', $data);
+        
+        return response()->json([
+            'success' => true,
+            'data' => $data
+        ]);
+        
+    } catch (\Exception $e) {
+        Log::error('❌ Institution show error: ' . $e->getMessage());
+        return response()->json([
+            'success' => false,
+            'message' => $e->getMessage()
+        ], 500);
     }
+}
 
     /**
      * PUT /api/institutions/{institution}
@@ -351,7 +429,11 @@ class InstitutionController extends Controller
                 unset($data['contract_base64']);
             }
             
-            $updatedInstitution = $this->institutionService->updateInstitution($institution, $data);
+            // ✅ تمرير ID فقط بدلاً من الـ Model
+            $updatedInstitution = $this->institutionService->updateInstitution(
+                $institution->id, // ✅ تمرير ID فقط
+                $data
+            );
             
             return response()->json([
                 'success' => true,
@@ -367,56 +449,37 @@ class InstitutionController extends Controller
         }
     }
 
+
     /**
      * DELETE /api/institutions/{institution}
      * حذف مؤسسة
      */
     public function destroy(Institution $institution): JsonResponse
-    {
-        try {
-            return DB::transaction(function () use ($institution) {
-                if ($institution->contract_file) {
-                    \Storage::disk('public')->delete($institution->contract_file);
-                }
-                
-                $institution->owners()->detach();
-                $this->institutionService->deleteInstitution($institution);
-                
-                return response()->json([
-                    'success' => true,
-                    'message' => 'تم حذف المؤسسة بنجاح'
-                ]);
-            });
-        } catch (\Exception $e) {
-            Log::error('Institution destroy error: ' . $e->getMessage());
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage()
-            ], 500);
-        }
-    }
-
-    /**
-     * GET /api/institutions/types
-     * أنواع المؤسسات
-     */
-    public function getTypes(): JsonResponse
-    {
-        try {
-            $types = InstitutionType::where('is_active', true)->get();
+{
+    try {
+        return DB::transaction(function () use ($institution) {
+            if ($institution->contract_file) {
+                \Storage::disk('public')->delete($institution->contract_file);
+            }
+            
+            $institution->owners()->detach();
+            
+            // ✅ تمرير ID فقط
+            $this->institutionService->deleteInstitution($institution->id);
             
             return response()->json([
                 'success' => true,
-                'data' => $types
+                'message' => 'تم حذف المؤسسة بنجاح'
             ]);
-        } catch (\Exception $e) {
-            Log::error('Get institution types error: ' . $e->getMessage());
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage()
-            ], 500);
-        }
+        });
+    } catch (\Exception $e) {
+        Log::error('Institution destroy error: ' . $e->getMessage());
+        return response()->json([
+            'success' => false,
+            'message' => $e->getMessage()
+        ], 500);
     }
+}
 
     /**
      * GET /api/institutions/nearby
@@ -495,33 +558,34 @@ class InstitutionController extends Controller
      * تجديد اتفاقية المؤسسة
      */
     public function renewAgreement(Request $request, Institution $institution): JsonResponse
-    {
-        try {
-            $request->validate([
-                'months' => 'nullable|integer|min:1|max:60'
-            ]);
-            
-            $months = $request->get('months', 12);
-            $institution = $this->institutionService->renewAgreement($institution, $months);
-            
-            // ✅ تجديد بدون عمولة (لأن الـ Admin هو من يجدد)
-            
-            return response()->json([
-                'success' => true,
-                'message' => 'تم تجديد اتفاقية المؤسسة بنجاح',
-                'data' => [
-                    'agreement_expiry_date' => $institution->agreement_expiry_date,
-                    'status' => $institution->status
-                ]
-            ]);
-        } catch (\Exception $e) {
-            Log::error('Renew agreement error: ' . $e->getMessage());
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage()
-            ], 500);
-        }
+{
+    try {
+        $request->validate([
+            'months' => 'nullable|integer|min:1|max:60'
+        ]);
+        
+        $months = $request->get('months', 12);
+        
+        // ✅ تمرير ID فقط
+        $institution = $this->institutionService->renewAgreement($institution->id, $months);
+        
+        return response()->json([
+            'success' => true,
+            'message' => 'تم تجديد اتفاقية المؤسسة بنجاح',
+            'data' => [
+                'agreement_expiry_date' => $institution->agreement_expiry_date,
+                'status' => $institution->status
+            ]
+        ]);
+    } catch (\Exception $e) {
+        Log::error('Renew agreement error: ' . $e->getMessage());
+        return response()->json([
+            'success' => false,
+            'message' => $e->getMessage()
+        ], 500);
     }
+}
+
 
     /**
      * POST /api/institutions/{institution}/update-discount
@@ -647,6 +711,388 @@ class InstitutionController extends Controller
                 'success' => false,
                 'message' => $e->getMessage()
             ], 500);
+        }
+    }
+    public function getByMarketer($marketerId, Request $request): JsonResponse
+{
+    try {
+        $perPage = $request->get('per_page', 15);
+        $search = $request->get('search');
+        $status = $request->get('status');
+        
+        $query = Institution::where('created_by_marketer', $marketerId)
+            ->with(['type', 'owner']);
+        
+        if ($search) {
+            $query->where('name', 'like', "%{$search}%");
+        }
+        
+        if ($status) {
+            $query->where('status', $status);
+        }
+        
+        $institutions = $query->orderBy('created_at', 'desc')->paginate($perPage);
+        
+        return response()->json([
+            'success' => true,
+            'data' => $institutions->items(),
+            'meta' => [
+                'current_page' => $institutions->currentPage(),
+                'last_page' => $institutions->lastPage(),
+                'per_page' => $institutions->perPage(),
+                'total' => $institutions->total(),
+            ]
+        ]);
+    } catch (\Exception $e) {
+        Log::error('Get institutions by marketer error: ' . $e->getMessage());
+        return response()->json([
+            'success' => false,
+            'message' => $e->getMessage()
+        ], 500);
+    }
+}
+
+     
+    public function updateOwner(Request $request, $institutionId): JsonResponse
+    {
+        try {
+            // ✅ التحقق من وجود المؤسسة
+            $institution = Institution::findOrFail($institutionId);
+            
+            // ✅ جلب المالك
+            $owner = null;
+            
+            // 1. محاولة من owner_id
+            if ($institution->owner_id) {
+                $owner = User::find($institution->owner_id);
+            }
+            
+            // 2. إذا لم يوجد، حاول من جدول institution_owners
+            if (!$owner) {
+                $owner = $institution->primaryOwner();
+            }
+            
+            // 3. إذا لم يوجد، حاول من owners
+            if (!$owner) {
+                $owner = $institution->owners()->first();
+            }
+            
+            if (!$owner) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'لا يوجد مالك لهذه المؤسسة'
+                ], 404);
+            }
+            
+            // ✅ التحقق من صحة البيانات
+            $validated = $request->validate([
+                'full_name' => 'sometimes|string|max:255',
+                'phone' => 'sometimes|string|unique:users,phone,' . $owner->id . '|regex:/^([0-9\s\-\+\(\)]*)$/|min:10|max:15',
+                'email' => 'nullable|email|unique:users,email,' . $owner->id,
+                'password' => 'nullable|string|min:6',
+            ]);
+            
+            // ✅ تحديث بيانات المالك
+            $ownerData = [];
+            
+            if (isset($validated['full_name'])) {
+                $ownerData['full_name'] = $validated['full_name'];
+            }
+            
+            if (isset($validated['phone'])) {
+                $ownerData['phone'] = $validated['phone'];
+            }
+            
+            if (isset($validated['email'])) {
+                $ownerData['email'] = $validated['email'];
+            }
+            
+            if (isset($validated['password']) && !empty($validated['password'])) {
+                $ownerData['password'] = Hash::make($validated['password']);
+            }
+            
+            if (!empty($ownerData)) {
+                $owner->update($ownerData);
+            }
+            
+            // ✅ تسجيل العملية
+            Log::info('تم تحديث بيانات مالك المؤسسة', [
+                'institution_id' => $institution->id,
+                'institution_name' => $institution->name,
+                'owner_id' => $owner->id,
+                'admin_id' => $request->user()->id,
+                'updated_fields' => array_keys($ownerData)
+            ]);
+            
+            return response()->json([
+                'success' => true,
+                'message' => 'تم تحديث بيانات المالك بنجاح',
+                'data' => [
+                    'owner' => [
+                        'id' => $owner->id,
+                        'full_name' => $owner->full_name,
+                        'phone' => $owner->phone,
+                        'email' => $owner->email,
+                    ]
+                ]
+            ]);
+            
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'خطأ في التحقق من البيانات',
+                'errors' => $e->errors()
+            ], 422);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'المؤسسة غير موجودة'
+            ], 404);
+        } catch (\Exception $e) {
+            Log::error('❌ Update owner error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * PUT /api/institutions/{institution}/update-owner-password
+     * تحديث كلمة مرور مالك المؤسسة فقط
+     */
+    public function updateOwnerPassword(Request $request, $institutionId): JsonResponse
+    {
+        try {
+            // ✅ التحقق من وجود المؤسسة
+            $institution = Institution::findOrFail($institutionId);
+            
+            // ✅ جلب المالك
+            $owner = null;
+            
+            if ($institution->owner_id) {
+                $owner = User::find($institution->owner_id);
+            }
+            
+            if (!$owner) {
+                $owner = $institution->primaryOwner();
+            }
+            
+            if (!$owner) {
+                $owner = $institution->owners()->first();
+            }
+            
+            if (!$owner) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'لا يوجد مالك لهذه المؤسسة'
+                ], 404);
+            }
+            
+            // ✅ التحقق من صحة البيانات
+            $validated = $request->validate([
+                'password' => 'required|string|min:6',
+            ]);
+            
+            // ✅ تحديث كلمة المرور
+            $owner->password = Hash::make($validated['password']);
+            $owner->save();
+            
+            // ✅ تسجيل العملية
+            Log::info('تم تغيير كلمة مرور مالك المؤسسة', [
+                'institution_id' => $institution->id,
+                'institution_name' => $institution->name,
+                'owner_id' => $owner->id,
+                'admin_id' => $request->user()->id
+            ]);
+            
+            return response()->json([
+                'success' => true,
+                'message' => 'تم تغيير كلمة المرور بنجاح',
+                'data' => [
+                    'owner_id' => $owner->id,
+                    'owner_name' => $owner->full_name
+                ]
+            ]);
+            
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'خطأ في التحقق من البيانات',
+                'errors' => $e->errors()
+            ], 422);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'المؤسسة غير موجودة'
+            ], 404);
+        } catch (\Exception $e) {
+            Log::error('❌ Update owner password error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * POST /api/institutions/{institution}/reset-owner-password
+     * إعادة تعيين كلمة مرور مالك المؤسسة إلى 123456789
+     */
+    public function resetOwnerPassword($institutionId): JsonResponse
+    {
+        try {
+            // ✅ البحث عن المؤسسة
+            $institution = Institution::findOrFail($institutionId);
+            
+            // ✅ جلب المالك
+            $owner = null;
+            
+            if ($institution->owner_id) {
+                $owner = User::find($institution->owner_id);
+            }
+            
+            if (!$owner) {
+                $owner = $institution->primaryOwner();
+            }
+            
+            if (!$owner) {
+                $owner = $institution->owners()->first();
+            }
+            
+            if (!$owner) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'لا يوجد مالك لهذه المؤسسة'
+                ], 404);
+            }
+            
+            // ✅ تغيير كلمة المرور إلى 123456789
+            $newPassword = '123456789';
+            $owner->password = Hash::make($newPassword);
+            $owner->save();
+            
+            // ✅ تسجيل العملية
+            Log::info('تم إعادة تعيين كلمة مرور مالك المؤسسة', [
+                'institution_id' => $institution->id,
+                'institution_name' => $institution->name,
+                'owner_id' => $owner->id,
+                'owner_name' => $owner->full_name,
+                'admin_id' => request()->user()->id,
+                'admin_name' => request()->user()->full_name ?? 'Unknown',
+            ]);
+            
+            // ✅ إنشاء إشعار للمالك
+            $this->createPasswordResetNotification($owner, $institution, $newPassword);
+            
+            return response()->json([
+                'success' => true,
+                'message' => 'تم إعادة تعيين كلمة المرور بنجاح',
+                'data' => [
+                    'owner_id' => $owner->id,
+                    'owner_name' => $owner->full_name,
+                    'phone' => $owner->phone,
+                    'new_password' => $newPassword,
+                ]
+            ]);
+            
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'المؤسسة غير موجودة'
+            ], 404);
+        } catch (\Exception $e) {
+            Log::error('Error resetting owner password: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'حدث خطأ في إعادة تعيين كلمة المرور: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * GET /api/institutions/{institution}/owner
+     * جلب بيانات مالك المؤسسة
+     */
+    public function getOwner($institutionId): JsonResponse
+    {
+        try {
+            // ✅ البحث عن المؤسسة
+            $institution = Institution::findOrFail($institutionId);
+            
+            // ✅ جلب المالك
+            $owner = null;
+            
+            if ($institution->owner_id) {
+                $owner = User::find($institution->owner_id);
+            }
+            
+            if (!$owner) {
+                $owner = $institution->primaryOwner();
+            }
+            
+            if (!$owner) {
+                $owner = $institution->owners()->first();
+            }
+            
+            if (!$owner) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'لا يوجد مالك لهذه المؤسسة'
+                ], 404);
+            }
+            
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'id' => $owner->id,
+                    'full_name' => $owner->full_name,
+                    'phone' => $owner->phone,
+                    'email' => $owner->email,
+                    'status' => $owner->status,
+                    'role' => $owner->role,
+                    'created_at' => $owner->created_at,
+                ]
+            ]);
+            
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'المؤسسة غير موجودة'
+            ], 404);
+        } catch (\Exception $e) {
+            Log::error('❌ Get owner error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * إنشاء إشعار للمالك بعد إعادة تعيين كلمة المرور
+     */
+    protected function createPasswordResetNotification(User $owner, Institution $institution, string $newPassword): void
+    {
+        try {
+            \App\Models\Notification::create([
+                'user_id' => $owner->id,
+                'title' => '🔑 تم إعادة تعيين كلمة المرور',
+                'body' => "مرحباً {$owner->full_name}،\n\n"
+                    . "تم إعادة تعيين كلمة مرور حسابك للمؤسسة {$institution->name}.\n\n"
+                    . "📱 رقم الهاتف: {$owner->phone}\n"
+                    . "🔑 كلمة المرور الجديدة: {$newPassword}\n\n"
+                    . "يرجى تغيير كلمة المرور بعد تسجيل الدخول.",
+                'type' => 'warning',
+                'data' => json_encode([
+                    'institution_id' => $institution->id,
+                    'institution_name' => $institution->name,
+                    'phone' => $owner->phone,
+                    'action' => 'password_reset',
+                ])
+            ]);
+        } catch (\Exception $e) {
+            Log::warning('Failed to create password reset notification: ' . $e->getMessage());
         }
     }
 }

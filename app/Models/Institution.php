@@ -35,14 +35,13 @@ class Institution extends Model
 
     protected $casts = [
         'business_hours' => 'array',
-        'agreement_date' => 'datetime', // تغيير من date إلى datetime
-        'agreement_expiry_date' => 'datetime', // تغيير من date إلى datetime
+        'agreement_date' => 'datetime',
+        'agreement_expiry_date' => 'datetime',
         'latitude' => 'decimal:8',
         'longitude' => 'decimal:8',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
         'deleted_at' => 'datetime'
-        // تم إزالة discount_percentage من casts
     ];
 
     // ==================== Relationships ====================
@@ -82,11 +81,13 @@ class Institution extends Model
     }
 
     /**
-     * المالك الأساسي
+     * المالك الأساسي من جدول institution_owners
      */
     public function primaryOwner()
     {
-        return $this->owners()->wherePivot('is_primary', true)->first();
+        return $this->owners()
+            ->wherePivot('is_primary', true)
+            ->first();
     }
 
     /**
@@ -94,7 +95,7 @@ class Institution extends Model
      */
     public function discountTransactions()
     {
-        return $this->hasMany(DiscountTransaction::class);
+        return $this->hasMany(DiscountTransaction::class, 'institution_id');
     }
 
     /**
@@ -181,6 +182,24 @@ class Institution extends Model
     }
 
     /**
+     * اسم المالك الأساسي
+     */
+    public function getPrimaryOwnerNameAttribute()
+    {
+        $owner = $this->primaryOwner();
+        return $owner ? $owner->full_name : ($this->owner ? $this->owner->full_name : 'غير محدد');
+    }
+
+    /**
+     * معرف المالك الأساسي
+     */
+    public function getPrimaryOwnerIdAttribute()
+    {
+        $owner = $this->primaryOwner();
+        return $owner ? $owner->id : ($this->owner ? $this->owner->id : null);
+    }
+
+    /**
      * حالة الاتفاقية
      */
     public function getAgreementStatusAttribute()
@@ -231,43 +250,11 @@ class Institution extends Model
     // ==================== Mutators ====================
 
     /**
-     * تعيين نسبة الخصم - يحول القيمة إلى string للتخزين
+     * تعيين نسبة الخصم
      */
     public function setDiscountPercentageAttribute($value): void
     {
         $this->attributes['discount_percentage'] = number_format((float) $value, 2, '.', '');
-    }
-
-    /**
-     * تعيين تاريخ الاتفاقية
-     */
-    public function setAgreementDateAttribute($value): void
-    {
-        if ($value === null) {
-            $this->attributes['agreement_date'] = null;
-        } elseif ($value instanceof Carbon) {
-            $this->attributes['agreement_date'] = $value;
-        } elseif (is_string($value)) {
-            $this->attributes['agreement_date'] = $value;
-        } else {
-            $this->attributes['agreement_date'] = $value;
-        }
-    }
-
-    /**
-     * تعيين تاريخ انتهاء الاتفاقية
-     */
-    public function setAgreementExpiryDateAttribute($value): void
-    {
-        if ($value === null) {
-            $this->attributes['agreement_expiry_date'] = null;
-        } elseif ($value instanceof Carbon) {
-            $this->attributes['agreement_expiry_date'] = $value;
-        } elseif (is_string($value)) {
-            $this->attributes['agreement_expiry_date'] = $value;
-        } else {
-            $this->attributes['agreement_expiry_date'] = $value;
-        }
     }
 
     // ==================== Business Methods ====================
@@ -295,7 +282,7 @@ class Institution extends Model
     }
 
     /**
-     * تجديد الاتفاقية - الطريقة المصححة
+     * تجديد الاتفاقية
      */
     public function renewAgreement($months = 12): self
     {
@@ -313,17 +300,16 @@ class Institution extends Model
     }
 
     /**
-     * تحديث نسبة الخصم - الطريقة المصححة
+     * تحديث نسبة الخصم
      */
     public function updateDiscountPercentage($percentage): self
     {
-        // استخدام update مع string لتجنب مشكلة تحويل الأنواع
         $this->update(['discount_percentage' => number_format((float) $percentage, 2, '.', '')]);
         return $this;
     }
 
     /**
-     * تحديث نسبة الخصم باستخدام increment/decrement
+     * زيادة نسبة الخصم
      */
     public function increaseDiscountPercentage($percentage): self
     {
@@ -362,34 +348,6 @@ class Institution extends Model
         }
         
         return $this;
-    }
-
-    /**
-     * الحصول على تاريخ انتهاء الاتفاقية كـ Carbon
-     */
-    public function getAgreementExpiryCarbonAttribute(): ?Carbon
-    {
-        if (!$this->agreement_expiry_date) {
-            return null;
-        }
-        
-        return $this->agreement_expiry_date instanceof Carbon 
-            ? $this->agreement_expiry_date 
-            : Carbon::parse($this->agreement_expiry_date);
-    }
-
-    /**
-     * الحصول على تاريخ الاتفاقية كـ Carbon
-     */
-    public function getAgreementDateCarbonAttribute(): ?Carbon
-    {
-        if (!$this->agreement_date) {
-            return null;
-        }
-        
-        return $this->agreement_date instanceof Carbon 
-            ? $this->agreement_date 
-            : Carbon::parse($this->agreement_date);
     }
 
     /**

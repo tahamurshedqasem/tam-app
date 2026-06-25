@@ -1,7 +1,7 @@
 <?php
 
 namespace App\Http\Controllers\Api;
-
+use Illuminate\Http\JsonResponse;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use App\Models\Institution;
@@ -1001,4 +1001,46 @@ class InstitutionMarketerController extends Controller
         if ($commission >= 10000) return 'متوسط';
         return 'ضعيف';
     }
+    // في InstitutionMarketerController.php
+
+public function storeInstitutionType(Request $request): JsonResponse
+{
+    try {
+        $user = $request->user();
+        
+        // ✅ التحقق من أن المستخدم مسوق أو مدير
+        if (!in_array($user->role, ['admin', 'institution_marketer'])) {
+            return response()->json([
+                'success' => false,
+                'message' => 'This action is unauthorized.'
+            ], 403);
+        }
+
+        $validated = $request->validate([
+            'name' => 'required|string|max:255|unique:institution_types,name',
+            'name_ar' => 'required|string|max:255|unique:institution_types,name_ar',
+        ]);
+
+        $type = InstitutionType::create($validated);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'تم إنشاء نوع المؤسسة بنجاح',
+            'data' => $type
+        ], 201);
+
+    } catch (\Illuminate\Validation\ValidationException $e) {
+        return response()->json([
+            'success' => false,
+            'message' => 'خطأ في التحقق من البيانات',
+            'errors' => $e->errors()
+        ], 422);
+    } catch (\Exception $e) {
+        Log::error('❌ Error creating institution type: ' . $e->getMessage());
+        return response()->json([
+            'success' => false,
+            'message' => 'حدث خطأ أثناء إنشاء نوع المؤسسة: ' . $e->getMessage()
+        ], 500);
+    }
+}
 }

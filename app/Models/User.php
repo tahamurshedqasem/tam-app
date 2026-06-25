@@ -261,4 +261,6 @@ class User extends Authenticatable
         $this->phone_verified_at = now();
         $this->save();
     }
+
+    
 }

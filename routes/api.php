@@ -42,7 +42,7 @@ Route::prefix('auth')->name('auth.')->group(function () {
 Route::get('/customer/qr/{membership_number}', [CustomerController::class, 'generateQR'])->name('customer.qr');
 Route::get('/institutions/nearby', [InstitutionController::class, 'nearby'])->name('institutions.nearby');
 Route::get('/institutions/types', [InstitutionTypeController::class, 'index'])->name('institution-types.index');
-Route::get('/institutions/{institution}', [InstitutionController::class, 'show'])->name('institutions.show');
+// Route::get('/institutions/{institution}', [InstitutionController::class, 'show'])->name('institutions.show');
 Route::get('/customer/verify/{membership_number}', [VerificationController::class, 'checkMembership'])->name('customer.verify');
 
 // ============================================================================
@@ -107,7 +107,7 @@ Route::middleware(['auth:sanctum', 'check.status'])->group(function () {
     // 2.5 Admin Only Routes
     // ------------------------------------------------------------------------
     Route::middleware(['role:admin'])->prefix('admin')->name('admin.')->group(function () {
-        
+         Route::post('/customers/{id}/reset-password', [CustomerController::class, 'resetPassword']);
         // Institution Types Management
         Route::apiResource('institution-types', InstitutionTypeController::class)->names('institution-types');
         Route::post('/institution-types/{institution_type}/toggle', [InstitutionTypeController::class, 'toggleStatus'])->name('institution-types.toggle');
@@ -132,6 +132,15 @@ Route::middleware(['auth:sanctum', 'check.status'])->group(function () {
         
         // Institution Marketers Management
         Route::prefix('institution-marketers')->name('institution-marketers.')->group(function () {
+            // ✅ تحديث كلمة مرور مالك المؤسسة
+        Route::put('/institutions/{institution}/update-owner-password', [InstitutionController::class, 'updateOwnerPassword']);
+    
+
+// ✅ إعادة تعيين كلمة مرور مالك المؤسسة
+   
+
+// ✅ جلب بيانات مالك المؤسسة
+        Route::get('/institutions/{institution}/owner', [InstitutionController::class, 'getOwner']);
             Route::get('/', [InstitutionMarketerController::class, 'index'])->name('index');
             Route::post('/', [InstitutionMarketerController::class, 'store'])->name('store');
             Route::get('/{id}', [InstitutionMarketerController::class, 'show'])->name('show');
@@ -140,6 +149,7 @@ Route::middleware(['auth:sanctum', 'check.status'])->group(function () {
             Route::delete('/{id}', [InstitutionMarketerController::class, 'destroy'])->name('destroy');
             Route::put('/{id}/status', [InstitutionMarketerController::class, 'updateStatus'])->name('update-status');
             Route::get('/stats', [InstitutionMarketerController::class, 'stats'])->name('stats');
+            Route::post('/{id}/reset-owner-password', [InstitutionMarketerController::class, 'resetOwnerPassword']);
         });
         
         // Customer Marketers Management
@@ -153,6 +163,23 @@ Route::middleware(['auth:sanctum', 'check.status'])->group(function () {
             Route::put('/{id}/status', [CustomerMarketerController::class, 'updateStatus'])->name('update-status');
             Route::get('/stats', [CustomerMarketerController::class, 'stats'])->name('stats');
         });
+
+        // routes/api.php
+
+// ✅ تحديث بيانات مالك المؤسسة
+   
+
+// ✅ تحديث كلمة مرور مالك المؤسسة
+        Route::put('/institutions/{institution}/update-owner-password', [InstitutionController::class, 'updateOwnerPassword']);
+    
+
+// ✅ إعادة تعيين كلمة مرور مالك المؤسسة
+        Route::post('/institutions/{institution}/reset-owner-password', [InstitutionController::class, 'resetOwnerPassword']);
+   
+
+// ✅ جلب بيانات مالك المؤسسة
+        Route::get('/institutions/{institution}/owner', [InstitutionController::class, 'getOwner']);
+    
         
         // Reports
         Route::prefix('reports')->name('reports.')->group(function () {
@@ -200,7 +227,27 @@ Route::middleware(['auth:sanctum', 'check.status'])->group(function () {
         // Dashboard Stats
         Route::get('/dashboard-stats', [CustomerMarketerController::class, 'dashboardStats'])->name('dashboard-stats');
     });
-    
+Route::middleware(['role:admin,institution_marketer'])->prefix('institution-types')->name('institution-marketers.')->group(function () {
+        
+        // Institution Management for Marketers
+        Route::prefix('institutions')->name('institutions.')->group(function () {
+    Route::post('/', [InstitutionTypeController::class, 'store']);
+        Route::put('/{id}', [InstitutionTypeController::class, 'update']);
+        Route::delete('/{id}', [InstitutionTypeController::class, 'destroy']);
+                
+
+        // عمليات خاصة
+        Route::post('/{id}/toggle', [InstitutionTypeController::class, 'toggleStatus']);
+        Route::get('/statistics', [InstitutionTypeController::class, 'statistics']);
+        Route::get('/export', [InstitutionTypeController::class, 'export']);
+        
+        // عمليات متعددة (Bulk Operations)
+        Route::post('/bulk-delete', [InstitutionTypeController::class, 'bulkDelete']);
+        Route::post('/bulk-activate', [InstitutionTypeController::class, 'bulkActivate']);
+        Route::post('/bulk-deactivate', [InstitutionTypeController::class, 'bulkDeactivate']);
+      });
+      });
+
     // ------------------------------------------------------------------------
     // 2.7 Institution Marketer Routes (Institution Marketer & Admin)
     // ------------------------------------------------------------------------
@@ -213,6 +260,11 @@ Route::middleware(['auth:sanctum', 'check.status'])->group(function () {
             Route::get('/{id}', [InstitutionMarketerController::class, 'getInstitution'])->name('show');
             Route::put('/{id}', [InstitutionMarketerController::class, 'updateInstitution'])->name('update');
             Route::delete('/{id}', [InstitutionMarketerController::class, 'deleteInstitution'])->name('destroy');
+                    Route::post('/{institution}/reset-owner-password', [InstitutionController::class, 'resetOwnerPassword']);
+                    Route::put('{institution}/update-owner', [InstitutionController::class, 'updateOwner']);
+                            Route::post('/types', [InstitutionMarketerController::class, 'storeInstitutionType'])->name('types.store');
+
+            
         });
         
         // Marketer Commissions
@@ -287,8 +339,9 @@ Route::middleware(['auth:sanctum', 'check.status'])->group(function () {
     // 2.10 Institution Routes (All Authenticated Users)
     // ------------------------------------------------------------------------
     Route::get('/institutions', [InstitutionController::class, 'index'])->name('institutions.index');
+    Route::get('/institutions/marketer/{marketerId}', [InstitutionController::class, 'getByMarketer']);
     Route::post('/institutions', [InstitutionController::class, 'store'])->name('institutions.store');
-    Route::get('/institutions/{institution}', [InstitutionController::class, 'show'])->name('institutions.show');
+Route::get('/institutions/{id}', [InstitutionController::class, 'show']);
     Route::put('/institutions/{institution}', [InstitutionController::class, 'update'])->name('institutions.update');
     Route::delete('/institutions/{institution}', [InstitutionController::class, 'destroy'])->name('institutions.destroy');
     Route::post('/institutions/{institution}/renew-agreement', [InstitutionController::class, 'renewAgreement'])->name('institutions.renew-agreement');

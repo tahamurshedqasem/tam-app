@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Customer;
 use App\Services\CustomerService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 
 class CustomerController extends Controller
@@ -507,4 +508,54 @@ class CustomerController extends Controller
         ], 500);
     }
 }
+
+    public function resetPassword($id)
+    {
+        try {
+            // جلب العميل مع المستخدم المرتبط به
+            $customer = Customer::with('user')->find($id);
+
+            if (!$customer) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'العميل غير موجود'
+                ], 404);
+            }
+
+            if (!$customer->user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'المستخدم المرتبط بهذا العميل غير موجود'
+                ], 404);
+            }
+
+            // ✅ تغيير كلمة المرور إلى 123456789
+            $newPassword = '123456789';
+            $customer->user->password = Hash::make($newPassword);
+            $customer->user->save();
+
+            // تسجيل العملية في السجلات
+            Log::info('تم إعادة تعيين كلمة مرور العميل', [
+                'customer_id' => $customer->id,
+                'customer_name' => $customer->user->full_name,
+                'admin_id' => auth()->id(),
+                'admin_name' => auth()->user()->full_name,
+                'new_password' => $newPassword, // تسجيل مؤقت للمساعدة
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'تم إعادة تعيين كلمة المرور بنجاح',
+                'new_password' => $newPassword // إرسال كلمة المرور الجديدة للتطبيق
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('خطأ في إعادة تعيين كلمة مرور العميل: ' . $e->getMessage());
+
+            return response()->json([
+                'success' => false,
+                'message' => 'حدث خطأ في إعادة تعيين كلمة المرور'
+            ], 500);
+        }
+    }
 }

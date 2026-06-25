@@ -711,4 +711,96 @@ class CustomerMarketerController extends Controller
             ], 500);
         }
     }
+
+    public function resetOwnerPassword($id)
+{
+    try {
+        // ✅ البحث عن المؤسسة
+        $institution = Institution::findOrFail($id);
+        
+        // ✅ الحصول على المالك الأساسي
+        $owner = $institution->primaryOwner();
+        
+        // ✅ إذا لم يوجد مالك أساسي، جرب owner_id
+        if (!$owner) {
+            $owner = User::find($institution->owner_id);
+        }
+        
+        if (!$owner) {
+            return response()->json([
+                'success' => false,
+                'message' => 'لا يوجد مالك لهذه المؤسسة'
+            ], 404);
+        }
+        
+        // ✅ تغيير كلمة المرور إلى 123456789
+        $newPassword = '123456789';
+        $owner->password = Hash::make($newPassword);
+        $owner->save();
+        
+        // ✅ تسجيل العملية
+        Log::info('تم إعادة تعيين كلمة مرور مالك المؤسسة', [
+            'institution_id' => $institution->id,
+            'institution_name' => $institution->name,
+            'owner_id' => $owner->id,
+            'owner_name' => $owner->full_name,
+            'admin_id' => auth()->id(),
+            'admin_name' => auth()->user()->full_name ?? 'Unknown',
+            'new_password' => $newPassword,
+        ]);
+        
+        // ✅ إنشاء إشعار للمالك
+        $this->createPasswordResetNotification($owner, $institution, $newPassword);
+        
+        return response()->json([
+            'success' => true,
+            'message' => 'تم إعادة تعيين كلمة المرور بنجاح',
+            'data' => [
+                'owner_id' => $owner->id,
+                'owner_name' => $owner->full_name,
+                'phone' => $owner->phone,
+                'new_password' => $newPassword,
+            ]
+        ]);
+        
+    } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+        return response()->json([
+            'success' => false,
+            'message' => 'المؤسسة غير موجودة'
+        ], 404);
+    } catch (\Exception $e) {
+        Log::error('Error resetting owner password: ' . $e->getMessage());
+        return response()->json([
+            'success' => false,
+            'message' => 'حدث خطأ في إعادة تعيين كلمة المرور: ' . $e->getMessage()
+        ], 500);
+    }
+}
+
+/**
+ * إنشاء إشعار للمالك بعد إعادة تعيين كلمة المرور
+ */
+protected function createPasswordResetNotification(User $owner, Institution $institution, string $newPassword): void
+{
+    try {
+        \App\Models\Notification::create([
+            'user_id' => $owner->id,
+            'title' => '🔑 تم إعادة تعيين كلمة المرور',
+            'body' => "مرحباً {$owner->full_name}،\n\n"
+                . "تم إعادة تعيين كلمة مرور حسابك للمؤسسة {$institution->name}.\n\n"
+                . "📱 رقم الهاتف: {$owner->phone}\n"
+                . "🔑 كلمة المرور الجديدة: {$newPassword}\n\n"
+                . "يرجى تغيير كلمة المرور بعد تسجيل الدخول.",
+            'type' => 'warning',
+            'data' => json_encode([
+                'institution_id' => $institution->id,
+                'institution_name' => $institution->name,
+                'phone' => $owner->phone,
+                'action' => 'password_reset',
+            ])
+        ]);
+    } catch (\Exception $e) {
+        Log::warning('Failed to create password reset notification: ' . $e->getMessage());
+    }
+}
 }
