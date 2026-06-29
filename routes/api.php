@@ -36,6 +36,7 @@ Route::prefix('auth')->name('auth.')->group(function () {
     Route::post('/login', [AuthController::class, 'login'])->name('login');
     Route::post('/forgot-password', [AuthController::class, 'forgotPassword'])->name('forgot-password');
     Route::post('/reset-password', [AuthController::class, 'resetPassword'])->name('reset-password');
+    Route::post('/login-with-device', [AuthController::class, 'loginWithDevice'])->name('login-with-device');
 });
 
 // 1.2 Public Endpoints

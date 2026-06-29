@@ -6,9 +6,11 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Auth\LoginRequest;
 use App\Http\Requests\Auth\ChangePasswordRequest;
 use App\Http\Resources\UserResource;
+use App\Models\User;
 use App\Services\AuthService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Hash;
 
 class AuthController extends Controller
 {
@@ -129,4 +131,46 @@ class AuthController extends Controller
             'message' => 'تم تغيير كلمة المرور بنجاح'
         ]);
     }
+
+    public function loginWithDevice(Request $request)
+{
+    $request->validate([
+        'phone' => 'required|string',
+        'password' => 'required|string',
+        'device_id' => 'required|string',
+    ]);
+
+    $user = User::where('phone', $request->phone)->first();
+
+    if (!$user || !Hash::check($request->password, $user->password)) {
+        return response()->json([
+            'success' => false,
+            'message' => 'بيانات الدخول غير صحيحة'
+        ], 401);
+    }
+
+    // ✅ التحقق من الجهاز
+    if ($user->device_id && $user->device_id != $request->device_id) {
+        return response()->json([
+            'success' => false,
+            'message' => 'هذا الحساب مسجل على جهاز آخر. لا يمكن تسجيل الدخول من أكثر من جهاز واحد.'
+        ], 403);
+    }
+
+    // ✅ تحديث معرف الجهاز
+    $user->device_id = $request->device_id;
+    $user->save();
+
+    // إنشاء التوكن
+    $token = $user->createToken('auth_token')->plainTextToken;
+
+    return response()->json([
+        'success' => true,
+        'data' => [
+            'user' => $user,
+            'token' => $token,
+            'role' => $user->role,
+        ]
+    ]);
+}
 }
