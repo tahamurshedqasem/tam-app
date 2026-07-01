@@ -20,7 +20,8 @@ use App\Http\Controllers\Api\UserController;
 use App\Http\Controllers\Api\VerificationController;
 use App\Http\Controllers\Api\ActivityLogController;
 use Illuminate\Support\Facades\Route;
-
+use App\Http\Controllers\Api\GovernorateController;
+use App\Http\Controllers\Api\DistrictController;
 /*
 |--------------------------------------------------------------------------
 | API Routes
@@ -37,6 +38,7 @@ Route::prefix('auth')->name('auth.')->group(function () {
     Route::post('/forgot-password', [AuthController::class, 'forgotPassword'])->name('forgot-password');
     Route::post('/reset-password', [AuthController::class, 'resetPassword'])->name('reset-password');
     Route::post('/login-with-device', [AuthController::class, 'loginWithDevice'])->name('login-with-device');
+    
 });
 
 // 1.2 Public Endpoints
@@ -267,6 +269,26 @@ Route::middleware(['role:admin,institution_marketer'])->prefix('institution-type
 
             
         });
+        Route::prefix('governorates')->group(function () {
+        Route::get('/', [GovernorateController::class, 'index']);
+        Route::get('/{id}', [GovernorateController::class, 'show']);
+        Route::post('/', [GovernorateController::class, 'store']);
+        Route::put('/{id}', [GovernorateController::class, 'update']);
+        Route::delete('/{id}', [GovernorateController::class, 'destroy']);
+    });
+
+    // ===== مناطق =====
+    Route::prefix('districts')->group(function () {
+        Route::get('/', [DistrictController::class, 'index']);
+        Route::get('/{id}', [DistrictController::class, 'show']);
+        Route::post('/', [DistrictController::class, 'store']);
+        Route::put('/{id}', [DistrictController::class, 'update']);
+        Route::delete('/{id}', [DistrictController::class, 'destroy']);
+    });
+
+  
+
+    
         
         // Marketer Commissions
         Route::get('/{id}/commissions', [InstitutionMarketerController::class, 'getMarketerCommissions'])->name('commissions');
@@ -314,6 +336,18 @@ Route::middleware(['role:admin,institution_marketer'])->prefix('institution-type
             Route::get('/', [CustomerController::class, 'membershipInfo'])->name('info');
             Route::get('/qr-code', [CustomerController::class, 'getQRCode'])->name('qr-code');
         });
+             Route::prefix('governorates')->group(function () {
+        Route::get('/', [GovernorateController::class, 'index']);
+        Route::get('/{id}', [GovernorateController::class, 'show']);
+       
+    });
+
+    // ===== مناطق =====
+    Route::prefix('districts')->group(function () {
+        Route::get('/', [DistrictController::class, 'index']);
+        Route::get('/{id}', [DistrictController::class, 'show']);
+
+    });
         
         // Transactions
         Route::prefix('transactions')->name('transactions.')->group(function () {

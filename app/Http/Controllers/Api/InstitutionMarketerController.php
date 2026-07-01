@@ -14,7 +14,10 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
+use App\Models\Governorate;
+use App\Models\District;
 
+use Illuminate\Support\Facades\Validator;
 class InstitutionMarketerController extends Controller
 {
     protected NotificationService $notificationService;
@@ -397,54 +400,54 @@ class InstitutionMarketerController extends Controller
      * GET /api/institution-marketers/institutions
      * ✅ قائمة المؤسسات التي أضافها المسوق
      */
-    public function getInstitutions(Request $request)
-    {
-        try {
-            $marketerId = $request->user()->id;
+    // public function getInstitutions(Request $request)
+    // {
+    //     try {
+    //         $marketerId = $request->user()->id;
             
-            $perPage = $request->get('per_page', 15);
-            $search = $request->get('search');
+    //         $perPage = $request->get('per_page', 15);
+    //         $search = $request->get('search');
             
-            $query = Institution::where('created_by_marketer', $marketerId)
-                ->with('type', 'owner');
+    //         $query = Institution::where('created_by_marketer', $marketerId)
+    //             ->with('type', 'owner');
 
-            if ($search) {
-                $query->where(function($q) use ($search) {
-                    $q->where('name', 'like', "%{$search}%")
-                      ->orWhere('phone', 'like', "%{$search}%")
-                      ->orWhere('address', 'like', "%{$search}%");
-                });
-            }
+    //         if ($search) {
+    //             $query->where(function($q) use ($search) {
+    //                 $q->where('name', 'like', "%{$search}%")
+    //                   ->orWhere('phone', 'like', "%{$search}%")
+    //                   ->orWhere('address', 'like', "%{$search}%");
+    //             });
+    //         }
 
-            $institutions = $query->orderBy('created_at', 'desc')->paginate($perPage);
+    //         $institutions = $query->orderBy('created_at', 'desc')->paginate($perPage);
 
-            return response()->json([
-                'success' => true,
-                'data' => $institutions->items(),
-                'meta' => [
-                    'current_page' => $institutions->currentPage(),
-                    'last_page' => $institutions->lastPage(),
-                    'per_page' => $institutions->perPage(),
-                    'total' => $institutions->total(),
-                ]
-            ]);
-        } catch (\Exception $e) {
-            Log::error('Error in getInstitutions: ' . $e->getMessage());
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage()
-            ], 500);
-        }
-    }
+    //         return response()->json([
+    //             'success' => true,
+    //             'data' => $institutions->items(),
+    //             'meta' => [
+    //                 'current_page' => $institutions->currentPage(),
+    //                 'last_page' => $institutions->lastPage(),
+    //                 'per_page' => $institutions->perPage(),
+    //                 'total' => $institutions->total(),
+    //             ]
+    //         ]);
+    //     } catch (\Exception $e) {
+    //         Log::error('Error in getInstitutions: ' . $e->getMessage());
+    //         return response()->json([
+    //             'success' => false,
+    //             'message' => $e->getMessage()
+    //         ], 500);
+    //     }
+    // }
 
     /**
      * POST /api/institution-marketers/institutions
      * ✅ إضافة مؤسسة جديدة بواسطة مسوق المؤسسات
      */
-    public function storeInstitution(Request $request)
+     public function storeInstitution(Request $request): JsonResponse
     {
         try {
-            $validated = $request->validate([
+            $validator = Validator::make($request->all(), [
                 'name' => 'required|string|max:255',
                 'type_id' => 'required|exists:institution_types,id',
                 'phone' => 'required|string|unique:institutions,phone',
@@ -457,97 +460,290 @@ class InstitutionMarketerController extends Controller
                 'owner_password' => 'required|string|min:6',
                 'contract_base64' => 'nullable|string',
                 'description' => 'nullable|string',
-                'business_hours' => 'nullable|json',
-                'latitude' => 'nullable|numeric',
-                'longitude' => 'nullable|numeric',
+                'governorate_name' => 'nullable|string|max:255',
+                'district_name' => 'nullable|string|max:255',
+                'governorate_id' => 'nullable|exists:governorates,id',
+                'district_id' => 'nullable|exists:districts,id',
             ]);
 
-            $marketer = $request->user();
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'errors' => $validator->errors(),
+                    'message' => 'خطأ في التحقق من البيانات'
+                ], 422);
+            }
 
-            return DB::transaction(function () use ($validated, $marketer) {
+            return DB::transaction(function () use ($request) {
                 
-                // 1. إنشاء حساب المالك
+                // =============================================
+                // 1. معالجة المحافظة
+                // =============================================
+                $governorateId = $request->governorate_id;
+                $governorateName = $request->governorate_name;
+
+                // إذا تم إرسال اسم محافظة جديد
+                if ($request->has('governorate_name') && !empty($request->governorate_name)) {
+                    $governorateName = trim($request->governorate_name);
+                    
+                    // البحث عن المحافظة
+                    $governorate = Governorate::where('name_ar', $governorateName)
+                        ->orWhere('name', $governorateName)
+                        ->first();
+                    
+                    if (!$governorate) {
+                        // إنشاء محافظة جديدة
+                        $governorate = Governorate::create([
+                            'name' => $governorateName,
+                            'name_ar' => $governorateName,
+                            'is_active' => true,
+                        ]);
+                        Log::info('✅ New governorate created: ' . $governorateName);
+                    }
+                    
+                    $governorateId = $governorate->id;
+                    $governorateName = $governorate->name_ar ?? $governorate->name;
+                } else if ($request->has('governorate_id') && !empty($request->governorate_id)) {
+                    // استخدام محافظة موجودة
+                    $governorate = Governorate::find($request->governorate_id);
+                    if ($governorate) {
+                        $governorateName = $governorate->name_ar ?? $governorate->name;
+                    }
+                }
+
+                // =============================================
+                // 2. معالجة المنطقة
+                // =============================================
+                $districtId = $request->district_id;
+                $districtName = $request->district_name;
+
+                if ($request->has('district_name') && !empty($request->district_name) && $governorateId) {
+                    $districtName = trim($request->district_name);
+                    
+                    // البحث عن المنطقة
+                    $district = District::where('governorate_id', $governorateId)
+                        ->where(function($q) use ($districtName) {
+                            $q->where('name_ar', $districtName)
+                              ->orWhere('name', $districtName);
+                        })
+                        ->first();
+                    
+                    if (!$district) {
+                        // إنشاء منطقة جديدة
+                        $district = District::create([
+                            'name' => $districtName,
+                            'name_ar' => $districtName,
+                            'governorate_id' => $governorateId,
+                            'is_active' => true,
+                        ]);
+                        Log::info('✅ New district created: ' . $districtName);
+                    }
+                    
+                    $districtId = $district->id;
+                    $districtName = $district->name_ar ?? $district->name;
+                } else if ($request->has('district_id') && !empty($request->district_id)) {
+                    // استخدام منطقة موجودة
+                    $district = District::find($request->district_id);
+                    if ($district) {
+                        $districtName = $district->name_ar ?? $district->name;
+                    }
+                }
+
+                // =============================================
+                // 3. إنشاء حساب المالك
+                // =============================================
                 $owner = User::create([
-                    'full_name' => $validated['owner_name'],
-                    'phone' => $validated['phone'],
-                    'password' => Hash::make($validated['owner_password']),
+                    'full_name' => $request->owner_name,
+                    'phone' => $request->phone,
+                    'password' => Hash::make($request->owner_password),
                     'role' => 'institution_owner',
                     'status' => 'active'
                 ]);
-                
-                // 2. إنشاء المؤسسة
+
+                // =============================================
+                // 4. إنشاء المؤسسة
+                // =============================================
                 $institutionData = [
-                    'name' => $validated['name'],
-                    'type_id' => $validated['type_id'],
-                    'phone' => $validated['phone'],
-                    'email' => $validated['email'] ?? null,
-                    'address' => $validated['address'],
-                    'discount_percentage' => $validated['discount_percentage'],
-                    'agreement_date' => $validated['agreement_date'],
-                    'agreement_expiry_date' => $validated['agreement_expiry_date'] ?? null,
+                    'name' => $request->name,
+                    'type_id' => $request->type_id,
+                    'phone' => $request->phone,
+                    'email' => $request->email,
+                    'address' => $request->address,
+                    'discount_percentage' => $request->discount_percentage,
+                    'agreement_date' => $request->agreement_date,
+                    'agreement_expiry_date' => $request->agreement_expiry_date,
                     'owner_id' => $owner->id,
-                    'created_by_marketer' => $marketer->id,
+                    'marketer_id' => $request->user()->id,
                     'status' => 'active',
-                    'description' => $validated['description'] ?? null,
-                    'business_hours' => $validated['business_hours'] ?? null,
-                    'latitude' => $validated['latitude'] ?? null,
-                    'longitude' => $validated['longitude'] ?? null,
+                    'description' => $request->description,
+                    'governorate_id' => $governorateId,
+                    'district_id' => $districtId,
+                    'governorate_name' => $governorateName,
+                    'district_name' => $districtName,
                 ];
-                
+
                 // معالجة صورة العقد
-                if (isset($validated['contract_base64']) && !empty($validated['contract_base64'])) {
-                    $contractPath = $this->saveBase64Image($validated['contract_base64'], 'contracts');
+                if ($request->has('contract_base64') && !empty($request->contract_base64)) {
+                    $contractPath = $this->saveBase64Image($request->contract_base64, 'contracts');
                     $institutionData['contract_file'] = $contractPath;
                 }
-                
+
                 $institution = Institution::create($institutionData);
-                
-                // 3. ربط المالك بالمؤسسة
+
+                // ربط المالك
                 $institution->owners()->attach($owner->id, ['is_primary' => true]);
-                
-                // 4. إنشاء العمولة (400 ريال)
-                $this->createMarketerCommission($institution, $marketer);
-                
-                // 5. إشعارات
-                $this->createOwnerNotification($owner, $institution, $validated['owner_password']);
-                $this->createMarketerNotification($institution, $marketer);
-                
-                // 6. إشعار لجميع العملاء
-                $this->notificationService->notifyNewInstitution($institution);
 
                 return response()->json([
                     'success' => true,
                     'message' => 'تم إنشاء المؤسسة بنجاح',
                     'data' => [
-                        'institution' => $institution->load(['type', 'owner']),
+                        'institution' => $institution->load(['type', 'governorate', 'district', 'owner']),
                         'owner' => [
                             'id' => $owner->id,
                             'full_name' => $owner->full_name,
                             'phone' => $owner->phone,
                         ],
-                        'commission' => [
-                            'amount' => 400,
-                            'currency' => 'YER',
-                            'status' => 'pending'
+                        'location' => [
+                            'governorate_id' => $governorateId,
+                            'governorate_name' => $governorateName,
+                            'district_id' => $districtId,
+                            'district_name' => $districtName,
                         ]
                     ]
                 ], 201);
             });
-            
-        } catch (\Illuminate\Validation\ValidationException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'خطأ في التحقق من البيانات',
-                'errors' => $e->errors()
-            ], 422);
+
         } catch (\Exception $e) {
-            Log::error('Error in storeInstitution: ' . $e->getMessage());
+            Log::error('❌ Error in storeInstitution: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
-                'message' => $e->getMessage()
+                'message' => 'حدث خطأ: ' . $e->getMessage()
             ], 500);
         }
     }
+
+    /**
+     * جلب المؤسسات مع التصفية
+     */
+    public function getInstitutions(Request $request): JsonResponse
+    {
+        try {
+            $query = Institution::with(['type', 'governorate', 'district', 'owner']);
+
+            // ✅ تصفية حسب المحافظة (بالاسم أو الـ ID)
+            if ($request->has('governorate_id') && $request->governorate_id) {
+                $query->where('governorate_id', $request->governorate_id);
+            }
+            
+            if ($request->has('governorate_name') && $request->governorate_name) {
+                $query->where('governorate_name', $request->governorate_name);
+            }
+
+            // ✅ تصفية حسب المنطقة
+            if ($request->has('district_id') && $request->district_id) {
+                $query->where('district_id', $request->district_id);
+            }
+            
+            if ($request->has('district_name') && $request->district_name) {
+                $query->where('district_name', $request->district_name);
+            }
+
+            // ✅ تصفية حسب النوع
+            if ($request->has('type_id') && $request->type_id) {
+                $query->where('type_id', $request->type_id);
+            }
+
+            // ✅ تصفية حسب المسوق
+            if ($request->has('marketer_id') && $request->marketer_id) {
+                $query->where('marketer_id', $request->marketer_id);
+            }
+
+            // ✅ البحث
+            if ($request->has('search') && $request->search) {
+                $search = $request->search;
+                $query->where(function($q) use ($search) {
+                    $q->where('name', 'LIKE', "%{$search}%")
+                      ->orWhere('phone', 'LIKE', "%{$search}%")
+                      ->orWhere('address', 'LIKE', "%{$search}%")
+                      ->orWhere('governorate_name', 'LIKE', "%{$search}%")
+                      ->orWhere('district_name', 'LIKE', "%{$search}%");
+                });
+            }
+
+            $institutions = $query->orderBy('created_at', 'desc')->get();
+
+            return response()->json([
+                'success' => true,
+                'data' => $institutions,
+                'message' => 'تم جلب المؤسسات بنجاح'
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Error in getInstitutions: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'حدث خطأ: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * حفظ الصورة من Base64
+     */
+    
+    /**
+     * جلب جميع المؤسسات مع إمكانية التصفية
+     */
+    // public function getInstitutions(Request $request)
+    // {
+    //     try {
+    //         $query = Institution::with(['type', 'governorate', 'district', 'owner']);
+
+    //         // تصفية حسب المسوق
+    //         if ($request->has('marketer_id')) {
+    //             $query->where('marketer_id', $request->marketer_id);
+    //         }
+
+    //         // تصفية حسب المحافظة
+    //         if ($request->has('governorate_id')) {
+    //             $query->where('governorate_id', $request->governorate_id);
+    //         }
+
+    //         // تصفية حسب المنطقة
+    //         if ($request->has('district_id')) {
+    //             $query->where('district_id', $request->district_id);
+    //         }
+
+    //         // تصفية حسب النوع
+    //         if ($request->has('type_id')) {
+    //             $query->where('type_id', $request->type_id);
+    //         }
+
+    //         // البحث
+    //         if ($request->has('search')) {
+    //             $search = $request->search;
+    //             $query->where(function($q) use ($search) {
+    //                 $q->where('name', 'LIKE', "%{$search}%")
+    //                   ->orWhere('phone', 'LIKE', "%{$search}%")
+    //                   ->orWhere('address', 'LIKE', "%{$search}%");
+    //             });
+    //         }
+
+    //         $institutions = $query->orderBy('created_at', 'desc')->get();
+
+    //         return response()->json([
+    //             'success' => true,
+    //             'data' => $institutions,
+    //             'message' => 'تم جلب المؤسسات بنجاح'
+    //         ]);
+
+    //     } catch (\Exception $e) {
+    //         return response()->json([
+    //             'success' => false,
+    //             'message' => 'حدث خطأ: ' . $e->getMessage()
+    //         ], 500);
+    //     }
+    // }
 
     /**
      * GET /api/institution-marketers/institutions/{id}

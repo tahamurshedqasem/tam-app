@@ -36,7 +36,7 @@ class InstitutionController extends Controller
     public function index(Request $request): JsonResponse
     {
         try {
-            $filters = $request->only(['search', 'type_id', 'status', 'city']);
+            $filters = $request->only(['search', 'type_id', 'status', 'city', 'governorate_id', 'district_id']);
             $perPage = $request->get('per_page', 15);
             
             $institutions = $this->institutionService->getAllInstitutions($filters, $perPage);
@@ -59,6 +59,34 @@ class InstitutionController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * عرض مؤسسة معينة مع المحافظة والمنطقة
+     */
+    // public function show($id): JsonResponse
+    // {
+    //     try {
+    //         $institution = $this->institutionService->getInstitutionById($id);
+            
+    //         if (!$institution) {
+    //             return response()->json([
+    //                 'success' => false,
+    //                 'message' => 'المؤسسة غير موجودة'
+    //             ], 404);
+    //         }
+            
+    //         return response()->json([
+    //             'success' => true,
+    //             'data' => new InstitutionResource($institution)
+    //         ]);
+    //     } catch (\Exception $e) {
+    //         Log::error('Institution show error: ' . $e->getMessage());
+    //         return response()->json([
+    //             'success' => false,
+    //             'message' => $e->getMessage()
+    //         ], 500);
+    //     }
+    // }
 
     /**
      * POST /api/institutions
