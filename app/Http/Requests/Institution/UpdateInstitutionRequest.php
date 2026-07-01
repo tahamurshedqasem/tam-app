@@ -32,7 +32,11 @@ class UpdateInstitutionRequest extends FormRequest
             'description' => 'nullable|string|max:1000',
             'business_hours' => 'nullable|json',
             'latitude' => 'nullable|numeric|between:-90,90',
-            'longitude' => 'nullable|numeric|between:-180,180'
+            'longitude' => 'nullable|numeric|between:-180,180',
+             'governorate_id' => 'nullable|exists:governorates,id',
+            'district_id' => 'nullable|exists:districts,id',
+            'governorate_name' => 'nullable|string|max:255',
+            'district_name' => 'nullable|string|max:255',
         ];
     }
 
@@ -45,7 +49,9 @@ class UpdateInstitutionRequest extends FormRequest
             'discount_percentage.min' => 'نسبة الخصم لا يمكن أن تكون أقل من 0',
             'discount_percentage.max' => 'نسبة الخصم لا يمكن أن تزيد عن 100',
             'status.in' => 'الحالة غير صحيحة',
-            'agreement_expiry_date.after' => 'تاريخ انتهاء الاتفاقية يجب أن يكون بعد تاريخ الاتفاقية'
+            'agreement_expiry_date.after' => 'تاريخ انتهاء الاتفاقية يجب أن يكون بعد تاريخ الاتفاقية',
+            'governorate_id.exists' => 'المحافظة المحددة غير موجودة',
+            'district_id.exists' => 'المنطقة المحددة غير موجودة',
         ];
     }
 }

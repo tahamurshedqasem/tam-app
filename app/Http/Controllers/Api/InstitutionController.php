@@ -348,8 +348,12 @@ class InstitutionController extends Controller
 public function show($id): JsonResponse
 {
     try {
-        // ✅ جلب المؤسسة مع العلاقات
-        $institution = Institution::with(['type'])->findOrFail($id);
+        // ✅ جلب المؤسسة مع جميع العلاقات
+        $institution = Institution::with([
+            'type',
+            'governorate',  // ✅ تحميل المحافظة
+            'district',     // ✅ تحميل المنطقة
+        ])->findOrFail($id);
         
         // ✅ جلب المالك
         $owner = null;
@@ -357,7 +361,7 @@ public function show($id): JsonResponse
             $owner = User::find($institution->owner_id);
         }
         
-        // ✅ جلب المسوق - محاولة من عدة مصادر
+        // ✅ جلب المسوق
         $marketer = null;
         
         // 1. محاولة من created_by_marketer
@@ -370,10 +374,9 @@ public function show($id): JsonResponse
             $marketer = User::find($institution->created_by);
         }
         
-        // 3. إذا لم يوجد، حاول من جدول institution_owners (قد يكون المالك هو المسوق)
+        // 3. إذا لم يوجد، حاول من جدول institution_owners
         if (!$marketer && $institution->owner_id) {
             $ownerUser = User::find($institution->owner_id);
-            // إذا كان المالك لديه دور institution_marketer
             if ($ownerUser && $ownerUser->role === 'institution_marketer') {
                 $marketer = $ownerUser;
             }
@@ -386,6 +389,20 @@ public function show($id): JsonResponse
                 ->first();
         }
         
+        // ✅ الحصول على أسماء المحافظة والمنطقة
+        $governorateName = $institution->governorate_name 
+            ?? ($institution->governorate?->name_ar ?? $institution->governorate?->name);
+        
+        $districtName = $institution->district_name 
+            ?? ($institution->district?->name_ar ?? $institution->district?->name);
+        
+        // ✅ بناء العنوان الكامل (من الأكبر إلى الأصغر)
+        $fullAddress = $this->buildFullAddress(
+            $governorateName,
+            $districtName,
+            $institution->address
+        );
+        
         // ✅ بناء البيانات
         $data = [
             'id' => $institution->id,
@@ -395,6 +412,7 @@ public function show($id): JsonResponse
             'phone' => $institution->phone,
             'email' => $institution->email,
             'address' => $institution->address,
+            'full_address' => $fullAddress, // ✅ العنوان الكامل المدمج
             'discount_percentage' => (float) $institution->discount_percentage,
             'status' => $institution->status,
             'created_at' => $institution->created_at,
@@ -402,6 +420,34 @@ public function show($id): JsonResponse
             'agreement_expiry_date' => $institution->agreement_expiry_date,
             'contract_file' => $institution->contract_file,
             'description' => $institution->description,
+            'business_hours' => $institution->business_hours,
+            
+            // ✅ المحافظة
+            'governorate_id' => $institution->governorate_id,
+            'governorate_name' => $governorateName,
+            'governorate' => $institution->governorate ? [
+                'id' => $institution->governorate->id,
+                'name' => $institution->governorate->name,
+                'name_ar' => $institution->governorate->name_ar,
+            ] : null,
+            
+            // ✅ المنطقة
+            'district_id' => $institution->district_id,
+            'district_name' => $districtName,
+            'district' => $institution->district ? [
+                'id' => $institution->district->id,
+                'name' => $institution->district->name,
+                'name_ar' => $institution->district->name_ar,
+            ] : null,
+            
+            // ✅ الموقع الكامل
+            'location' => [
+                'governorate' => $governorateName ?? 'غير محدد',
+                'district' => $districtName ?? 'غير محدد',
+                'full_address' => $fullAddress,
+            ],
+            'has_governorate' => !empty($governorateName),
+            'has_district' => !empty($districtName),
             
             // ✅ المالك
             'owner' => $owner ? [
@@ -439,43 +485,162 @@ public function show($id): JsonResponse
     }
 }
 
+/**
+ * بناء العنوان الكامل من المحافظة والمنطقة والعنوان التفصيلي
+ * الترتيب: المحافظة ← المنطقة ← العنوان التفصيلي
+ */
+private function buildFullAddress(?string $governorate, ?string $district, ?string $address): string
+{
+    $parts = [];
+    
+    // 1. إضافة المحافظة (الأكبر)
+    if (!empty($governorate)) {
+        $parts[] = trim($governorate);
+    }
+    
+    // 2. إضافة المنطقة (المتوسط)
+    if (!empty($district) && $district !== $governorate) {
+        $parts[] = trim($district);
+    }
+    
+    // 3. إضافة العنوان التفصيلي (الأصغر)
+    if (!empty($address)) {
+        $parts[] = trim($address);
+    }
+    
+    return !empty($parts) ? implode(' - ', $parts) : 'غير محدد';
+}
+
     /**
      * PUT /api/institutions/{institution}
      * تحديث بيانات مؤسسة
      */
     public function update(UpdateInstitutionRequest $request, Institution $institution): JsonResponse
-    {
-        try {
-            $data = $request->validated();
-            
-            if (isset($data['contract_base64']) && !empty($data['contract_base64'])) {
-                if ($institution->contract_file) {
-                    \Storage::disk('public')->delete($institution->contract_file);
-                }
-                $contractPath = $this->saveBase64Image($data['contract_base64'], 'contracts');
-                $data['contract_file'] = $contractPath;
-                unset($data['contract_base64']);
+{
+    try {
+        $data = $request->validated();
+        
+        // ✅ معالجة صورة العقد
+        if (isset($data['contract_base64']) && !empty($data['contract_base64'])) {
+            if ($institution->contract_file) {
+                \Storage::disk('public')->delete($institution->contract_file);
             }
-            
-            // ✅ تمرير ID فقط بدلاً من الـ Model
-            $updatedInstitution = $this->institutionService->updateInstitution(
-                $institution->id, // ✅ تمرير ID فقط
-                $data
-            );
-            
-            return response()->json([
-                'success' => true,
-                'message' => 'تم تحديث بيانات المؤسسة بنجاح',
-                'data' => new InstitutionResource($updatedInstitution)
-            ]);
-        } catch (\Exception $e) {
-            Log::error('Institution update error: ' . $e->getMessage());
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage()
-            ], 500);
+            $contractPath = $this->saveBase64Image($data['contract_base64'], 'contracts');
+            $data['contract_file'] = $contractPath;
+            unset($data['contract_base64']);
         }
+        
+        // ✅ معالجة المحافظة والمنطقة
+        $this->handleLocationData($data);
+        
+        // ✅ تحديث المؤسسة
+        $updatedInstitution = $this->institutionService->updateInstitution(
+            $institution->id,
+            $data
+        );
+        
+        return response()->json([
+            'success' => true,
+            'message' => 'تم تحديث بيانات المؤسسة بنجاح',
+            'data' => new InstitutionResource($updatedInstitution)
+        ]);
+    } catch (\Exception $e) {
+        Log::error('Institution update error: ' . $e->getMessage());
+        return response()->json([
+            'success' => false,
+            'message' => $e->getMessage()
+        ], 500);
     }
+}
+
+/**
+ * معالجة بيانات المحافظة والمنطقة
+ */
+private function handleLocationData(array &$data): void
+{
+    // =============================================
+    // 1. معالجة المحافظة
+    // =============================================
+    if (isset($data['governorate_id']) && $data['governorate_id']) {
+        // ✅ إذا تم إرسال governorate_id، جلب اسم المحافظة
+        $governorate = \App\Models\Governorate::find($data['governorate_id']);
+        if ($governorate) {
+            $data['governorate_name'] = $governorate->name_ar ?? $governorate->name;
+        }
+    } elseif (isset($data['governorate_name']) && $data['governorate_name']) {
+        // ✅ إذا تم إرسال governorate_name، البحث عن المحافظة أو إنشاؤها
+        $governorateName = trim($data['governorate_name']);
+        $governorate = \App\Models\Governorate::where('name_ar', $governorateName)
+            ->orWhere('name', $governorateName)
+            ->first();
+        
+        if (!$governorate) {
+            // إنشاء محافظة جديدة
+            $governorate = \App\Models\Governorate::create([
+                'name' => $governorateName,
+                'name_ar' => $governorateName,
+                'is_active' => true,
+            ]);
+            Log::info('✅ New governorate created during update: ' . $governorateName);
+        }
+        
+        $data['governorate_id'] = $governorate->id;
+        $data['governorate_name'] = $governorate->name_ar ?? $governorate->name;
+    }
+
+    // =============================================
+    // 2. معالجة المنطقة
+    // =============================================
+    if (isset($data['district_id']) && $data['district_id']) {
+        // ✅ إذا تم إرسال district_id، جلب اسم المنطقة
+        $district = \App\Models\District::find($data['district_id']);
+        if ($district) {
+            $data['district_name'] = $district->name_ar ?? $district->name;
+        }
+    } elseif (isset($data['district_name']) && $data['district_name']) {
+        // ✅ إذا تم إرسال district_name، البحث عن المنطقة أو إنشاؤها
+        $districtName = trim($data['district_name']);
+        
+        // التأكد من وجود governorate_id
+        if (!isset($data['governorate_id']) || !$data['governorate_id']) {
+            throw new \Exception('يجب تحديد المحافظة قبل إضافة منطقة جديدة');
+        }
+        
+        $district = \App\Models\District::where('governorate_id', $data['governorate_id'])
+            ->where(function($q) use ($districtName) {
+                $q->where('name_ar', $districtName)
+                  ->orWhere('name', $districtName);
+            })
+            ->first();
+        
+        if (!$district) {
+            // إنشاء منطقة جديدة
+            $district = \App\Models\District::create([
+                'name' => $districtName,
+                'name_ar' => $districtName,
+                'governorate_id' => $data['governorate_id'],
+                'is_active' => true,
+            ]);
+            Log::info('✅ New district created during update: ' . $districtName);
+        }
+        
+        $data['district_id'] = $district->id;
+        $data['district_name'] = $district->name_ar ?? $district->name;
+    }
+
+    // =============================================
+    // 3. تنظيف البيانات الفارغة
+    // =============================================
+    if (isset($data['governorate_id']) && !$data['governorate_id']) {
+        unset($data['governorate_id']);
+        $data['governorate_name'] = null;
+    }
+    
+    if (isset($data['district_id']) && !$data['district_id']) {
+        unset($data['district_id']);
+        $data['district_name'] = null;
+    }
+}
 
 
     /**
